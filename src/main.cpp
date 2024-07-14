@@ -1,10 +1,19 @@
-#include "../libs/imgui/imgui.h"
-#include "../libs/imgui/imgui_impl_sdl2.h"
-#include "../libs/imgui/imgui_impl_sdlrenderer2.h"
+#include "imgui.h"
+#include "imgui_impl_sdl2.h"
+#include "imgui_impl_sdlrenderer2.h"
+
 #include <SDL.h>
 #include <vector>
 
-// Initialization of SDL and ImGui
+enum DrawMode { DRAW_CIRCLE, DRAW_RECTANGLE, DRAW_SQUARE };
+
+struct Shape {
+  DrawMode mode;
+  SDL_Point start;
+  SDL_Point end;
+  ImVec4 color;
+};
+
 bool InitSDL(SDL_Window *&window, SDL_Renderer *&renderer) {
   if (SDL_Init(SDL_INIT_VIDEO) != 0)
     return false;
@@ -32,12 +41,39 @@ void CleanUp(SDL_Window *window, SDL_Renderer *renderer) {
   SDL_Quit();
 }
 
-// Drawing function
-void Draw(SDL_Renderer *renderer, std::vector<SDL_Point> &points,
-          SDL_Color color) {
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, 255);
-  for (const auto &point : points) {
-    SDL_RenderDrawPoint(renderer, point.x, point.y);
+void DrawShape(SDL_Renderer *renderer, const Shape &shape) {
+  SDL_SetRenderDrawColor(renderer, static_cast<Uint8>(shape.color.x * 255),
+                         static_cast<Uint8>(shape.color.y * 255),
+                         static_cast<Uint8>(shape.color.z * 255), 255);
+
+  int w = shape.end.x - shape.start.x;
+  int h = shape.end.y - shape.start.y;
+
+  switch (shape.mode) {
+  case DRAW_CIRCLE: {
+    int radius = (int)sqrt(w * w + h * h) / 2;
+    int centerX = shape.start.x + w / 2;
+    int centerY = shape.start.y + h / 2;
+    for (int w = 0; w < radius * 2; w++) {
+      for (int h = 0; h < radius * 2; h++) {
+        int dx = radius - w; // horizontal offset
+        int dy = radius - h; // vertical offset
+        if ((dx * dx + dy * dy) <= (radius * radius)) {
+          SDL_RenderDrawPoint(renderer, centerX + dx, centerY + dy);
+        }
+      }
+    }
+    break;
+  }
+  case DRAW_RECTANGLE:
+    SDL_RenderFillRect(renderer,
+                       new SDL_Rect{shape.start.x, shape.start.y, w, h});
+    break;
+  case DRAW_SQUARE:
+    int size = std::min(abs(w), abs(h));
+    SDL_RenderFillRect(renderer,
+                       new SDL_Rect{shape.start.x, shape.start.y, size, size});
+    break;
   }
 }
 
@@ -49,18 +85,31 @@ int main(int, char **) {
 
   bool running = true;
   SDL_Event event;
-  std::vector<SDL_Point> points;
-  SDL_Color drawColor = {255, 0, 0, 255};
+  std::vector<Shape> shapes;
+  ImVec4 drawColor = ImVec4(0.45f, 0.78f, 0.93f, 1.00f);
+  DrawMode currentMode = DRAW_CIRCLE;
+  bool drawing = false;
+  SDL_Point startPoint;
 
   while (running) {
     while (SDL_PollEvent(&event)) {
       ImGui_ImplSDL2_ProcessEvent(&event);
       if (event.type == SDL_QUIT)
         running = false;
-      if (event.type == SDL_MOUSEBUTTONDOWN) {
-        int x, y;
-        SDL_GetMouseState(&x, &y);
-        points.push_back({x, y});
+      if (event.type == SDL_MOUSEBUTTONDOWN &&
+          event.button.button == SDL_BUTTON_LEFT) {
+        startPoint = {event.button.x, event.button.y};
+        drawing = true;
+      }
+      if (event.type == SDL_MOUSEBUTTONUP &&
+          event.button.button == SDL_BUTTON_LEFT) {
+        if (drawing) {
+          shapes.push_back({currentMode,
+                            startPoint,
+                            {event.button.x, event.button.y},
+                            drawColor});
+          drawing = false;
+        }
       }
     }
 
@@ -71,15 +120,24 @@ int main(int, char **) {
 
     // ImGui interface
     ImGui::Begin("Controls");
+    if (ImGui::Button("Quit?")) {
+      running = false;
+    }
     ImGui::ColorEdit3("Draw Color", (float *)&drawColor);
+    const char *items[] = {"Circle", "Rectangle", "Square"};
+    int currentItem = (int)currentMode;
+    ImGui::Combo("Mode", &currentItem, items, IM_ARRAYSIZE(items));
+    currentMode = (DrawMode)currentItem;
     ImGui::End();
 
     // Clear screen
-    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    SDL_SetRenderDrawColor(renderer, 30, 30, 46, 255);
     SDL_RenderClear(renderer);
 
-    // Draw points
-    Draw(renderer, points, drawColor);
+    // Draw shapes
+    for (const auto &shape : shapes) {
+      DrawShape(renderer, shape);
+    }
 
     // Render ImGui
     ImGui::Render();
